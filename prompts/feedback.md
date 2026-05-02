@@ -1,6 +1,8 @@
 You are running in CI, triggered by a polling check that found recent activity on PR `#$PR_NUMBER` in the `$TARGET_REPO` repository. Address any unaddressed reviewer feedback.
 
-Read the orchestrator's rules file at `$ORCHESTRATOR_DIR/rules/general.md` before applying any fixes. If the target repo has its own rules at `$LOCALES_PATH/rules/`, read those too.
+Read all rules files before applying any fixes. Rules are in the orchestrator repo:
+- General rules (apply to all repos): `$ORCHESTRATOR_DIR/rules/general/` — read every `.md` file in this directory.
+- Repo-specific rules: `$ORCHESTRATOR_DIR/rules/$TARGET_REPO/` — read every `.md` file in this directory if it exists.
 
 You are committing as `$BOT_USER`. All git commits must use this identity (already configured). "Already replied" checks must look for responses from `$BOT_USER`.
 
@@ -102,14 +104,48 @@ You cannot push to a merged branch. Instead:
 
 ## Step 4: Rule-proposal PR for broad feedback
 
-For each broad comment, reply to it suggesting the reviewer open an issue or PR in the orchestrator repo to codify the rule. Include the orchestrator repo name: `$GITHUB_REPOSITORY`.
+For each broad comment, create a rule-proposal PR on the **orchestrator** repo (`$GITHUB_REPOSITORY`):
 
-Example reply:
-> This sounds like a general translation rule. To make it permanent, you can open an issue at [orchestrator repo] or I can note it for the maintainer to add to the rules.
+1. The orchestrator repo is checked out at `$ORCHESTRATOR_DIR`. Work there for this step.
+
+2. Create a branch `chore/translation-rule-<short-slug>` from the orchestrator's main branch.
+
+3. Choose the target file:
+   - **General rule** (applies to all languages across all repos) → add to or create a file in `rules/general/`.
+   - **Repo-specific rule** → add to or create a file in `rules/$TARGET_REPO/`. Use descriptive filenames (e.g. `russian.md`, `terminology.md`).
+
+4. The rule text should be self-contained and prescriptive.
+
+5. Commit and push to the orchestrator's `origin`:
+   ```
+   cd $ORCHESTRATOR_DIR
+   git checkout -b chore/translation-rule-<short-slug>
+   git add rules/
+   git commit -m "chore: propose translation rule — <summary>"
+   git push origin HEAD
+   ```
+
+6. Open a PR on the orchestrator repo:
+   ```
+   gh pr create \
+     --repo $GITHUB_REPOSITORY \
+     --head "chore/translation-rule-<short-slug>" \
+     --base main \
+     --title "chore: propose translation rule — <one-line summary>" \
+     --body "Rule proposed based on reviewer feedback from $TARGET_REPO#$PR_NUMBER.
+
+   ## Context
+
+   Reviewer: @<username>
+   Original comment: <quoted text>"
+   ```
+
+7. Reply to the original feedback comment on the target repo PR with a link to the rule-proposal PR.
 
 ## Important
 
 - Only fix what the reviewer asked for — do not add new translations or make unrelated changes.
 - Preserve all variables (like `{variable}`) and tags (like `<0>...</0>`).
 - Always reply to every comment from allowed users.
-- Always push to the `fork` remote, never to `origin`.
+- Always push translation fixes to the `fork` remote, never to `origin`.
+- Push rule proposals to the orchestrator's `origin` (not the fork).

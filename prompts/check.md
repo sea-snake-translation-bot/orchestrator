@@ -1,6 +1,8 @@
 You are running in CI as a translation bot. Check the repo `$TARGET_REPO` for missing translations and create pull requests as needed.
 
-Read the orchestrator's rules file at `$ORCHESTRATOR_DIR/rules/general.md` before you start. If the target repo has its own rules at `$LOCALES_PATH/rules/`, read those too.
+Read all rules files before you start. Rules are in the orchestrator repo:
+- General rules (apply to all repos): `$ORCHESTRATOR_DIR/rules/general/` — read every `.md` file in this directory.
+- Repo-specific rules: `$ORCHESTRATOR_DIR/rules/$TARGET_REPO/` — read every `.md` file in this directory if it exists.
 
 You are committing as `$BOT_USER`. All git commits must use this identity (already configured). "Already addressed" checks must look for responses from `$BOT_USER`, not from any human reviewer.
 
@@ -50,7 +52,7 @@ For each language that needs translation, do the following:
 
 2. If `$EXTRACT_CMD` is non-empty, run it to ensure translation files reflect the latest source strings.
 
-3. Translate all entries that have empty/missing target translations. Follow the rules from `$ORCHESTRATOR_DIR/rules/general.md` and any repo-specific rules.
+3. Translate all entries that have empty/missing target translations. Follow all rules you read earlier (general + repo-specific).
 
 4. If `$FORMAT_CMD` is non-empty, run it.
 
