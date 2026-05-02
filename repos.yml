@@ -18,6 +18,8 @@ repos:
     source_language: en
     # i18n framework hint (helps Claude understand the codebase)
     framework: svelte-lingui
+    # Node.js version required by this repo
+    node_version: "24"
     # Commands to run in the target repo (leave blank to skip)
     setup: npm ci
     extract: npm run extract

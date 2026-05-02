@@ -162,7 +162,7 @@ jobs:
       - uses: actions/setup-node@v4
         if: steps.gate.outputs.skip != 'true'
         with:
-          node-version: 20
+          node-version: ${{ matrix.repo.node_version || '20' }}
 
       # Install target repo dependencies
       - name: Setup target repo

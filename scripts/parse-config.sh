@@ -40,6 +40,7 @@ matrix=$(echo "$repos" | jq --arg org "$bot_org" '[.[] | {
   file_format:       .file_format,
   source_language:   .source_language,
   framework:         (.framework // ""),
+  node_version:      (.node_version // "20"),
   setup:             (.setup // ""),
   extract:           (.extract // ""),
   format:            (.format // ""),

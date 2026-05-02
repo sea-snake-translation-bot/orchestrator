@@ -67,7 +67,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ matrix.pr.node_version || '20' }}
 
       # Read per-repo config from repos.yml
       - name: Read repo config
