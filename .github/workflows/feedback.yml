@@ -1,0 +1,139 @@
+name: Feedback
+
+# Polls for unaddressed reviewer feedback on bot-created translation PRs.
+on:
+  schedule:
+    - cron: "*/15 * * * *" # every 15 minutes
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: feedback
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      prs: ${{ steps.check.outputs.prs }}
+      bot_org: ${{ steps.config.outputs.bot_org }}
+      bot_user: ${{ steps.config.outputs.bot_user }}
+      bot_email: ${{ steps.config.outputs.bot_email }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read config
+        id: config
+        run: |
+          config=$(python3 -c "
+          import yaml, json, sys
+          with open('repos.yml') as f:
+              print(json.dumps(yaml.safe_load(f)))
+          ")
+          echo "bot_org=$(echo "$config" | jq -r '.bot_org')" >> "$GITHUB_OUTPUT"
+          echo "bot_user=$(echo "$config" | jq -r '.bot_user')" >> "$GITHUB_OUTPUT"
+          echo "bot_email=$(echo "$config" | jq -r '.bot_email')" >> "$GITHUB_OUTPUT"
+
+      - name: Find PRs with recent activity
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
+        run: bash scripts/check-feedback.sh 20
+
+  process:
+    needs: discover
+    if: needs.discover.outputs.prs != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        pr: ${{ fromJson(needs.discover.outputs.prs) }}
+      max-parallel: 2
+      fail-fast: false
+    steps:
+      # Checkout orchestrator
+      - uses: actions/checkout@v4
+        with:
+          path: orchestrator
+
+      # Checkout target repo
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.pr.repo }}
+          path: target
+          fetch-depth: 0
+          token: ${{ secrets.BOT_PAT }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Read per-repo config from repos.yml
+      - name: Read repo config
+        id: repo-config
+        working-directory: orchestrator
+        run: |
+          config=$(python3 -c "
+          import yaml, json, sys
+          with open('repos.yml') as f:
+              data = yaml.safe_load(f)
+          repo = [r for r in data['repos'] if r['repo'] == '${{ matrix.pr.repo }}'][0]
+          print(json.dumps(repo))
+          ")
+          echo "locales_path=$(echo "$config" | jq -r '.locales_path')" >> "$GITHUB_OUTPUT"
+          echo "file_format=$(echo "$config" | jq -r '.file_format')" >> "$GITHUB_OUTPUT"
+          echo "setup=$(echo "$config" | jq -r '.setup // empty')" >> "$GITHUB_OUTPUT"
+          echo "extract=$(echo "$config" | jq -r '.extract // empty')" >> "$GITHUB_OUTPUT"
+          echo "format=$(echo "$config" | jq -r '.format // empty')" >> "$GITHUB_OUTPUT"
+          echo "branch_prefix=$(echo "$config" | jq -r '.branch_prefix // "translate"')" >> "$GITHUB_OUTPUT"
+          echo "pr_title_prefix=$(echo "$config" | jq -r '.pr_title_prefix // "chore:"')" >> "$GITHUB_OUTPUT"
+          echo "default_reviewers=$(echo "$config" | jq -r '(.default_reviewers // []) | join(",")')" >> "$GITHUB_OUTPUT"
+          echo "language_reviewers=$(echo "$config" | jq -r '(.language_reviewers // {}) | to_entries | map(.key + "=" + .value) | join(",")')" >> "$GITHUB_OUTPUT"
+          echo "feedback_allowlist=$(echo "$config" | jq -r '(.feedback_allowlist // []) | join(",")')" >> "$GITHUB_OUTPUT"
+
+      - name: Setup target repo
+        if: steps.repo-config.outputs.setup != ''
+        working-directory: target
+        run: ${{ steps.repo-config.outputs.setup }}
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code@2.1.116
+
+      - name: Configure git and fork remote
+        working-directory: target
+        env:
+          BOT_PAT: ${{ secrets.BOT_PAT }}
+        run: |
+          git config user.name "${{ needs.discover.outputs.bot_user }}"
+          git config user.email "${{ needs.discover.outputs.bot_email }}"
+          git remote add fork "https://x-access-token:${BOT_PAT}@github.com/${{ matrix.pr.fork }}.git"
+          git fetch fork
+
+      - name: Run Claude
+        working-directory: target
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
+          ORCHESTRATOR_DIR: ${{ github.workspace }}/orchestrator
+          TARGET_REPO: ${{ matrix.pr.repo }}
+          BOT_ORG: ${{ needs.discover.outputs.bot_org }}
+          BOT_USER: ${{ needs.discover.outputs.bot_user }}
+          FORK_REPO: ${{ matrix.pr.fork }}
+          PR_NUMBER: ${{ matrix.pr.number }}
+          PR_HEAD_REF: ${{ matrix.pr.headRefName }}
+          PR_MERGED: ${{ matrix.pr.merged }}
+          LOCALES_PATH: ${{ steps.repo-config.outputs.locales_path }}
+          FILE_FORMAT: ${{ steps.repo-config.outputs.file_format }}
+          EXTRACT_CMD: ${{ steps.repo-config.outputs.extract }}
+          FORMAT_CMD: ${{ steps.repo-config.outputs.format }}
+          BRANCH_PREFIX: ${{ steps.repo-config.outputs.branch_prefix }}
+          PR_TITLE_PREFIX: ${{ steps.repo-config.outputs.pr_title_prefix }}
+          DEFAULT_REVIEWERS: ${{ steps.repo-config.outputs.default_reviewers }}
+          LANGUAGE_REVIEWERS: ${{ steps.repo-config.outputs.language_reviewers }}
+          FEEDBACK_ALLOWLIST: ${{ steps.repo-config.outputs.feedback_allowlist }}
+        run: |
+          prompt=$(envsubst < "$ORCHESTRATOR_DIR/prompts/feedback.md")
+          claude -p "$prompt" \
+            --dangerously-skip-permissions \
+            --allowedTools "Bash(git:*),Bash(gh pr:*),Bash(gh api repos/${{ matrix.pr.repo }}/:*),Bash(gh api graphql:*),Bash(npm:*),Bash(yarn:*),Bash(pnpm:*),Bash(awk:*),Bash(grep:*),Bash(sed:*),Bash(cat:*),Bash(basename:*),Bash(echo:*),Bash(jq:*),Bash(wc:*),Bash(head:*),Bash(tail:*),Bash(date:*),Bash(find:*),Bash(ls:*),Bash(mkdir:*),Bash(cd:*),Bash(envsubst:*),Bash(printf:*),Bash(sort:*),Bash(uniq:*),Bash(tr:*),Read,Write,Edit,Glob,Grep,Agent"

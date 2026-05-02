@@ -1,0 +1,152 @@
+name: Translate
+
+# Checks all managed repos for missing translations and creates per-language PRs.
+on:
+  schedule:
+    - cron: "0 8 * * 1" # weekly Monday 8am UTC
+  workflow_dispatch:
+    inputs:
+      target_repo:
+        description: "Specific repo (owner/name), or blank for all"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: translate
+  cancel-in-progress: false
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      repos: ${{ steps.list.outputs.repos }}
+      bot_org: ${{ steps.list.outputs.bot_org }}
+      bot_user: ${{ steps.list.outputs.bot_user }}
+      bot_email: ${{ steps.list.outputs.bot_email }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build repo matrix
+        id: list
+        run: bash scripts/parse-config.sh "${{ inputs.target_repo }}"
+
+  translate:
+    needs: matrix
+    if: needs.matrix.outputs.repos != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        repo: ${{ fromJson(needs.matrix.outputs.repos) }}
+      max-parallel: 2
+      fail-fast: false
+    steps:
+      # Checkout orchestrator (for prompts, rules)
+      - uses: actions/checkout@v4
+        with:
+          path: orchestrator
+
+      # Checkout target repo
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.repo.repo }}
+          path: target
+          fetch-depth: 0
+          token: ${{ secrets.BOT_PAT }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Install target repo dependencies
+      - name: Setup target repo
+        if: matrix.repo.setup != ''
+        working-directory: target
+        run: ${{ matrix.repo.setup }}
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code@2.1.116
+
+      - name: Configure git and fork remote
+        working-directory: target
+        env:
+          BOT_PAT: ${{ secrets.BOT_PAT }}
+        run: |
+          git config user.name "${{ needs.matrix.outputs.bot_user }}"
+          git config user.email "${{ needs.matrix.outputs.bot_email }}"
+          git remote add fork "https://x-access-token:${BOT_PAT}@github.com/${{ matrix.repo.fork }}.git"
+          git fetch fork
+
+      - name: Sync fork
+        env:
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
+        run: |
+          gh repo sync "${{ matrix.repo.fork }}" \
+            --source "${{ matrix.repo.repo }}" --force 2>/dev/null || true
+
+      - name: Snapshot branch refs
+        working-directory: target
+        run: |
+          git for-each-ref --format='%(refname:short)=%(objectname)' refs/heads/ \
+            > "$RUNNER_TEMP/pre-refs.txt"
+
+      - name: Run Claude
+        working-directory: target
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
+          ORCHESTRATOR_DIR: ${{ github.workspace }}/orchestrator
+          TARGET_REPO: ${{ matrix.repo.repo }}
+          BOT_ORG: ${{ needs.matrix.outputs.bot_org }}
+          BOT_USER: ${{ needs.matrix.outputs.bot_user }}
+          FORK_REPO: ${{ matrix.repo.fork }}
+          LOCALES_PATH: ${{ matrix.repo.locales_path }}
+          FILE_FORMAT: ${{ matrix.repo.file_format }}
+          SOURCE_LANGUAGE: ${{ matrix.repo.source_language }}
+          FRAMEWORK: ${{ matrix.repo.framework }}
+          EXTRACT_CMD: ${{ matrix.repo.extract }}
+          FORMAT_CMD: ${{ matrix.repo.format }}
+          BRANCH_PREFIX: ${{ matrix.repo.branch_prefix }}
+          PR_TITLE_PREFIX: ${{ matrix.repo.pr_title_prefix }}
+          DEFAULT_REVIEWERS: ${{ matrix.repo.default_reviewers }}
+          LANGUAGE_REVIEWERS: ${{ matrix.repo.language_reviewers }}
+        run: |
+          prompt=$(envsubst < "$ORCHESTRATOR_DIR/prompts/check.md")
+          claude -p "$prompt" \
+            --dangerously-skip-permissions \
+            --allowedTools "Bash(git:*),Bash(gh pr:*),Bash(gh api repos/${{ matrix.repo.repo }}/:*),Bash(gh api graphql:*),Bash(npm:*),Bash(yarn:*),Bash(pnpm:*),Bash(awk:*),Bash(grep:*),Bash(sed:*),Bash(cat:*),Bash(basename:*),Bash(echo:*),Bash(jq:*),Bash(wc:*),Bash(head:*),Bash(tail:*),Bash(date:*),Bash(find:*),Bash(ls:*),Bash(mkdir:*),Bash(cd:*),Bash(envsubst:*),Bash(printf:*),Bash(sort:*),Bash(uniq:*),Bash(tr:*),Read,Write,Edit,Glob,Grep,Agent"
+
+      - name: Audit Claude changes
+        if: always()
+        working-directory: target
+        run: |
+          set -euo pipefail
+          violations=()
+          while IFS='=' read -r ref sha; do
+            pre_sha=$(grep "^${ref}=" "$RUNNER_TEMP/pre-refs.txt" 2>/dev/null | cut -d= -f2 || true)
+            if [ -z "$pre_sha" ]; then
+              base="origin/main"
+            elif [ "$pre_sha" != "$sha" ]; then
+              base="$pre_sha"
+            else
+              continue
+            fi
+            files=$(git diff --name-only "$base..$sha" 2>/dev/null || true)
+            [ -z "$files" ] && continue
+            while IFS= read -r f; do
+              # Allow only translation files within the locales path
+              case "$f" in
+                ${{ matrix.repo.locales_path }}/*) ;;
+                *) violations+=("$ref: $f") ;;
+              esac
+            done <<< "$files"
+          done < <(git for-each-ref --format='%(refname:short)=%(objectname)' refs/heads/)
+
+          if [ ${#violations[@]} -gt 0 ]; then
+            echo "::error::Claude modified files outside the locales path:"
+            printf '  %s\n' "${violations[@]}"
+            exit 1
+          fi
+          echo "Audit passed — all changed files are within the allowed path set."

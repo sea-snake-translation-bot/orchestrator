@@ -1,0 +1,50 @@
+# ── Bot identity ─────────────────────────────────────────────────
+# GitHub account where forks are created.
+# A classic PAT (public_repo scope) from this account goes into the BOT_PAT secret.
+bot_org: sea-snake-translation-bot
+bot_user: sea-snake-translation-bot
+bot_email: sea-snake-translation-bot@users.noreply.github.com
+
+# ── Managed repositories ─────────────────────────────────────────
+# Add an entry here to start managing translations for a public repo.
+# The bot will automatically fork it and begin creating translation PRs.
+repos:
+  - repo: dfinity/internet-identity
+    # Path to translation files relative to repo root
+    locales_path: src/frontend/src/lib/locales
+    # File format: po | json | yaml | xliff | arb
+    file_format: po
+    # Source language code (this file is never translated)
+    source_language: en
+    # i18n framework hint (helps Claude understand the codebase)
+    framework: svelte-lingui
+    # Commands to run in the target repo (leave blank to skip)
+    setup: npm ci
+    extract: npm run extract
+    format: npm run format
+    # Git branch / PR naming
+    branch_prefix: chore/translate
+    pr_title_prefix: "chore(fe):"
+    # Enable weekly context-audit sweeps (adds translator context to source files)
+    context_audit: true
+    # Source file globs for context audit
+    source_paths:
+      - src/frontend/src/lib/**/*.svelte
+      - src/frontend/src/routes/**/*.svelte
+    # Reviewers added to every translation PR
+    default_reviewers:
+      - aterga
+      - sea-snake
+    # Additional reviewers per language code
+    language_reviewers:
+      it: AntonioVentilii
+      fr: mducroux
+      de: marc0olo
+    # Users whose PR feedback the bot will process (everyone else is ignored)
+    feedback_allowlist:
+      - AntonioVentilii
+      - aterga
+      - sea-snake
+      - marc0olo
+      - mducroux
+      - Copilot

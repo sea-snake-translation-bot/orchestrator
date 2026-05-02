@@ -1,0 +1,27 @@
+name: Setup
+
+# Creates forks for newly-added repos in repos.yml.
+# Syncing happens in each workflow (translate, feedback, context-audit) before they run.
+on:
+  push:
+    branches: [main]
+    paths: [repos.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: setup
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fork and sync all repos
+        env:
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
+        run: bash scripts/setup.sh
