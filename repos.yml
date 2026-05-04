@@ -21,7 +21,7 @@ repos:
     # Node.js version required by this repo
     node_version: "24"
     # Commands to run in the target repo (leave blank to skip)
-    setup: npm ci
+    setup: npm install
     extract: npm run extract
     format: npm run format
     # Git branch / PR naming
