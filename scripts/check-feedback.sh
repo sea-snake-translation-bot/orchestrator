@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Lists bot PRs (open + recently merged) with activity in the last N minutes.
-# Usage: ./scripts/check-feedback.sh [minutes]   (default: 20)
+# Lists bot PRs that may have unaddressed feedback:
+#   - ALL open bot PRs (no time filter — Claude checks each one for unaddressed comments)
+#   - Merged bot PRs within the last 14 days (time-bounded to avoid ancient history)
 # Requires: GH_TOKEN in the environment.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -13,35 +14,29 @@ with open('repos.yml') as f:
 
 bot_user=$(echo "$config" | jq -r '.bot_user')
 bot_org=$(echo "$config" | jq -r '.bot_org')
-minutes="${1:-20}"
-
-# Date N minutes ago (macOS + Linux compatible)
-since=$(date -u -d "${minutes} minutes ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
-  || date -u -v-"${minutes}"M +%Y-%m-%dT%H:%M:%SZ)
 
 cutoff_14d=$(date -u -d '14 days ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
   || date -u -v-14d +%Y-%m-%dT%H:%M:%SZ)
 
 result="[]"
 
-# Use process substitution to avoid subshell from pipe
 while IFS= read -r repo; do
   name=$(echo "$repo" | cut -d/ -f2)
   fork="${bot_org}/${name}"
 
-  # Open PRs authored by the bot, updated recently
+  # ALL open PRs from the bot — no time filter, Claude decides what's unaddressed
   open=$(gh pr list --repo "$repo" --state open --author "$bot_user" \
     --json number,title,headRefName,updatedAt \
-    --jq "[.[] | select(.updatedAt >= \"$since\")]" 2>/dev/null || echo "[]")
+    --jq '[.[] | . + {merged: false}]' 2>/dev/null || echo "[]")
 
   open=$(echo "$open" | jq \
     --arg r "$repo" --arg f "$fork" \
-    '[.[] + {repo: $r, fork: $f, merged: false}]')
+    '[.[] + {repo: $r, fork: $f}]')
 
-  # Merged PRs authored by the bot (within 14 days), updated recently
+  # Merged PRs within 14 days — feedback can still land after merge
   merged=$(gh pr list --repo "$repo" --state merged --author "$bot_user" --limit 30 \
     --json number,title,headRefName,updatedAt,mergedAt \
-    --jq "[.[] | select(.mergedAt >= \"$cutoff_14d\") | select(.updatedAt >= \"$since\")]" 2>/dev/null || echo "[]")
+    --jq "[.[] | select(.mergedAt >= \"$cutoff_14d\")]" 2>/dev/null || echo "[]")
 
   merged=$(echo "$merged" | jq \
     --arg r "$repo" --arg f "$fork" \
@@ -55,9 +50,9 @@ echo "$result" | jq .
 
 count=$(echo "$result" | jq 'length')
 if [ "$count" -eq 0 ]; then
-  echo "No bot PRs with recent activity." >&2
+  echo "No bot PRs found." >&2
 else
-  echo "$count PR(s) with activity in the last $minutes minutes." >&2
+  echo "$count bot PR(s) queued for feedback check." >&2
 fi
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
