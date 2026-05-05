@@ -28,7 +28,7 @@ repos:
     branch_prefix: chore/translate
     pr_title_prefix: "chore(fe):"
     # Enable weekly context-audit sweeps (adds translator context to source files)
-    context_audit: true
+    context_audit: false
     # Source file globs for context audit
     source_paths:
       - src/frontend/src/lib/**/*.svelte
