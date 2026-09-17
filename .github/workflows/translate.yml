@@ -231,8 +231,8 @@ jobs:
         if: steps.gate.outputs.skip != 'true'
         working-directory: target
         run: |
-          git for-each-ref --format='%(refname:short)=%(objectname)' refs/heads/ \
-            > "$RUNNER_TEMP/pre-refs.txt"
+          git for-each-ref --format='%(refname:short)=%(objectname)' \
+            refs/heads/ refs/remotes/fork/ > "$RUNNER_TEMP/pre-refs.txt"
 
       - name: Run Claude
         if: steps.gate.outputs.skip != 'true'
@@ -263,34 +263,9 @@ jobs:
         if: always() && steps.gate.outputs.skip != 'true'
         working-directory: target
         run: |
-          set -euo pipefail
-          violations=()
-          while IFS='=' read -r ref sha; do
-            pre_sha=$(grep "^${ref}=" "$RUNNER_TEMP/pre-refs.txt" 2>/dev/null | cut -d= -f2 || true)
-            if [ -z "$pre_sha" ]; then
-              base="origin/main"
-            elif [ "$pre_sha" != "$sha" ]; then
-              base="$pre_sha"
-            else
-              continue
-            fi
-            files=$(git diff --name-only "$base..$sha" 2>/dev/null || true)
-            [ -z "$files" ] && continue
-            while IFS= read -r f; do
-              # Allow only translation files within the locales path
-              case "$f" in
-                ${{ matrix.repo.locales_path }}/*) ;;
-                *) violations+=("$ref: $f") ;;
-              esac
-            done <<< "$files"
-          done < <(git for-each-ref --format='%(refname:short)=%(objectname)' refs/heads/)
-
-          if [ ${#violations[@]} -gt 0 ]; then
-            echo "::error::Claude modified files outside the locales path:"
-            printf '  %s\n' "${violations[@]}"
-            exit 1
-          fi
-          echo "Audit passed — all changed files are within the allowed path set."
+          bash "$GITHUB_WORKSPACE/orchestrator/scripts/audit-claude-changes.sh" \
+            "$RUNNER_TEMP/pre-refs.txt" \
+            '${{ matrix.repo.locales_path }}/*'
 
       # Each defect becomes one Escalate run, which fixes it in the target
       # repo's source and pushes onto the translation PR. Skipped when the bot

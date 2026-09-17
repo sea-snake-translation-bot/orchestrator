@@ -114,8 +114,8 @@ jobs:
       - name: Snapshot branch refs
         working-directory: target
         run: |
-          git for-each-ref --format='%(refname:short)=%(objectname)' refs/heads/ \
-            > "$RUNNER_TEMP/pre-refs.txt"
+          git for-each-ref --format='%(refname:short)=%(objectname)' \
+            refs/heads/ refs/remotes/fork/ > "$RUNNER_TEMP/pre-refs.txt"
 
       - name: Run Claude
         working-directory: target
@@ -145,31 +145,7 @@ jobs:
         if: always()
         working-directory: target
         run: |
-          set -euo pipefail
-          violations=()
-          while IFS='=' read -r ref sha; do
-            pre_sha=$(grep "^${ref}=" "$RUNNER_TEMP/pre-refs.txt" 2>/dev/null | cut -d= -f2 || true)
-            if [ -z "$pre_sha" ]; then
-              base="origin/main"
-            elif [ "$pre_sha" != "$sha" ]; then
-              base="$pre_sha"
-            else
-              continue
-            fi
-            files=$(git diff --name-only "$base..$sha" 2>/dev/null || true)
-            [ -z "$files" ] && continue
-            while IFS= read -r f; do
-              case "$f" in
-                ${{ matrix.repo.locales_path }}/*) ;;
-                *.svelte|*.tsx|*.jsx|*.vue|*.ts|*.js) ;;
-                *) violations+=("$ref: $f") ;;
-              esac
-            done <<< "$files"
-          done < <(git for-each-ref --format='%(refname:short)=%(objectname)' refs/heads/)
-
-          if [ ${#violations[@]} -gt 0 ]; then
-            echo "::error::Claude modified unexpected files:"
-            printf '  %s\n' "${violations[@]}"
-            exit 1
-          fi
-          echo "Audit passed."
+          bash "$GITHUB_WORKSPACE/orchestrator/scripts/audit-claude-changes.sh" \
+            "$RUNNER_TEMP/pre-refs.txt" \
+            '${{ matrix.repo.locales_path }}/*' \
+            '*.svelte' '*.tsx' '*.jsx' '*.vue' '*.ts' '*.js'
