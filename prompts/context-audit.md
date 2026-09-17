@@ -73,7 +73,7 @@ If `$EXTRACT_CMD` is non-empty, run it. If `$FORMAT_CMD` is non-empty, run it. N
 
 ## Step 7: Open the PR
 
-1. Branch: `$BRANCH_PREFIX-context` from latest default branch.
+1. Branch: `git checkout -b $BRANCH_PREFIX-context origin/main` — upstream's default branch, which the `target` checkout has as `origin/main`. Never base it on `fork/main` or rebase onto it; that puts the PR on a stale base.
 2. Stage both source file changes and translation file changes.
 3. Commit and push to **fork**:
    ```
