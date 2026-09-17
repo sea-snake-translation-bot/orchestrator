@@ -62,6 +62,14 @@ If no language has missing translations, stop and report "Nothing to do".
 
 3. For each language with missing entries, translate all empty/missing entries. Follow all rules you read earlier (general + repo-specific). Process every language in this single run.
 
+   If an entry cannot be translated correctly in some language because of how the
+   source message is built — a count with no plural structure, a sentence split
+   across msgids, an ambiguity with no `msgctxt` — that is a source defect. Follow
+   `$ORCHESTRATOR_DIR/rules/general/source-defects.md`: translate it as faithfully
+   as the language allows, and list it in the PR body under a `## Source defects`
+   heading, with the source file and line, what no translation can express, and the
+   source change that would fix it. Do not reword the translation to hide it.
+
 4. If `$FORMAT_CMD` is non-empty, run it.
 
 5. Stage ONLY the translation files inside `$LOCALES_PATH` for the languages you actually updated. Build commands may touch other files — do not include those.
@@ -123,5 +131,6 @@ If no language in this PR has a matching entry in `$LANGUAGE_REVIEWERS`, skip th
 - Do not touch files for languages that have all translations filled in.
 - Skip the source language (`$SOURCE_LANGUAGE`).
 - Always push to the `fork` remote, never to `origin`.
+- A problem that can only be fixed in `$TARGET_REPO`'s source is reported in the PR body, never worked around in a translation.
 - The branch is based on `origin/main` and stays that way. If a push to the fork is rejected, report the rejection — never rebase onto `fork/main` to get the push through, because that silently moves the PR onto a stale base.
 - Always create the PR with `--repo $TARGET_REPO --head $BOT_ORG:$BRANCH_PREFIX`.

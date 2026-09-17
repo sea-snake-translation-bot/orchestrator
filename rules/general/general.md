@@ -6,3 +6,5 @@ Rules that apply to every language when translating.
 - Apply the correct ICU plural categories for the target language (e.g. `one`/`other`, `one`/`few`/`many`/`other`, or just `other`). `other` is mandatory; additional categories are optional. If a target-language category is not explicitly present, ICU falls back to `other`.
 - If the source plural has fewer categories than the target language, add target-language categories when needed for natural grammar. It is acceptable to keep fewer categories (such as only `one` + `other`) when that remains grammatically natural.
 - Do not translate brand names.
+- Do not add or remove what the source states. A translation that resolves an ambiguity the source left open, or drops a distinction the source makes, is a change in meaning.
+- If a translation problem can only be fixed in the source code, follow `rules/general/source-defects.md`: report it, rather than rewording the translation around it.
