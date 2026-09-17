@@ -89,6 +89,7 @@ jobs:
           echo "branch_prefix=$(echo "$config" | jq -r '.branch_prefix // "translate"')" >> "$GITHUB_OUTPUT"
           echo "pr_title_prefix=$(echo "$config" | jq -r '.pr_title_prefix // "chore:"')" >> "$GITHUB_OUTPUT"
           echo "feedback_allowlist=$(echo "$config" | jq -r '(.feedback_allowlist // []) | join(",")')" >> "$GITHUB_OUTPUT"
+          echo "escalation=$(echo "$config" | jq -r '.escalation.enabled // false')" >> "$GITHUB_OUTPUT"
 
       - name: Setup target repo
         if: steps.repo-config.outputs.setup != ''
@@ -128,8 +129,52 @@ jobs:
           BRANCH_PREFIX: ${{ steps.repo-config.outputs.branch_prefix }}
           PR_TITLE_PREFIX: ${{ steps.repo-config.outputs.pr_title_prefix }}
           FEEDBACK_ALLOWLIST: ${{ steps.repo-config.outputs.feedback_allowlist }}
+          ESCALATIONS_FILE: ${{ runner.temp }}/escalations.json
         run: |
           prompt=$(envsubst < "$ORCHESTRATOR_DIR/prompts/feedback.md")
           claude -p "$prompt" \
             --dangerously-skip-permissions \
             --allowedTools "Bash(git:*),Bash(gh pr:*),Bash(gh api repos/${{ matrix.pr.repo }}/:*),Bash(gh api graphql:*),Bash(npm:*),Bash(yarn:*),Bash(pnpm:*),Bash(awk:*),Bash(grep:*),Bash(sed:*),Bash(cat:*),Bash(basename:*),Bash(echo:*),Bash(jq:*),Bash(wc:*),Bash(head:*),Bash(tail:*),Bash(date:*),Bash(find:*),Bash(ls:*),Bash(mkdir:*),Bash(cd:*),Bash(envsubst:*),Bash(printf:*),Bash(sort:*),Bash(uniq:*),Bash(tr:*),Read,Write,Edit,Glob,Grep,Agent"
+
+      # Each defect becomes one Escalate run, which fixes it in the target
+      # repo's source and pushes onto the translation PR. Skipped when the bot
+      # has already escalated that msgid on that PR, since an escalation
+      # changes msgids and would otherwise be rediscovered on the next run.
+      - name: Dispatch escalations for source defects
+        if: steps.repo-config.outputs.escalation == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
+          ESCALATIONS_FILE: ${{ runner.temp }}/escalations.json
+          TARGET_REPO: ${{ matrix.pr.repo }}
+        run: |
+          set -euo pipefail
+          [ -f "$ESCALATIONS_FILE" ] || { echo "No source defects recorded."; exit 0; }
+          if ! jq -e 'type == "array" and length > 0' "$ESCALATIONS_FILE" >/dev/null 2>&1; then
+            echo "::warning::$ESCALATIONS_FILE is not a non-empty JSON array; nothing to escalate."
+            exit 0
+          fi
+
+          count=$(jq 'length' "$ESCALATIONS_FILE")
+          for i in $(seq 0 $((count - 1))); do
+            defect=$(jq -c ".[$i]" "$ESCALATIONS_FILE")
+            pr=$(echo "$defect" | jq -r '.pr_number // empty')
+            msgid=$(echo "$defect" | jq -r '.msgid // empty')
+            if [ -z "$pr" ] || [ -z "$msgid" ]; then
+              echo "::warning::Skipping defect $i — needs both pr_number and msgid."
+              continue
+            fi
+
+            marker=$(printf '%s' "$msgid" | sha256sum | cut -c1-12)
+            if gh api "repos/$TARGET_REPO/issues/$pr/comments" --paginate --jq '.[].body' \
+                 | grep -qF "<!-- source-defect: $marker"; then
+              echo "Already escalated on #$pr: $msgid"
+              continue
+            fi
+
+            echo "Escalating on #$pr: $msgid"
+            gh workflow run escalate.yml \
+              --repo "${{ github.repository }}" \
+              -f target_repo="$TARGET_REPO" \
+              -f pr_number="$pr" \
+              -f defect="$defect"
+          done

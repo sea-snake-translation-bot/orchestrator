@@ -1,6 +1,8 @@
 Rules for translation problems that no catalogue edit can fix, because the limitation is in how the source message is built rather than in any translation of it.
 
-When you meet one, the catalogue is the wrong place to solve it. Translate as faithfully as the source allows, then report the defect in a PR comment so the source-code owner can fix it. A reworded translation that papers over the defect looks correct to a reviewer who only reads the diff, and it buries the real problem — often while quietly changing what the string says.
+When you meet one, the catalogue is the wrong place to solve it. Translate as faithfully as the source allows, then record the defect so it can be fixed where it lives. A reworded translation that papers over the defect looks correct to a reviewer who only reads the diff, and it buries the real problem — often while quietly changing what the string says.
+
+Recording it does more than inform someone. Where a repo enables `escalation` in `repos.yml`, a defect written to `$ESCALATIONS_FILE` starts the Escalate workflow, which fixes the message in that repo's source and pushes the fix onto the same translation PR — so the entry it regenerates can then be translated properly. That is the outcome to aim for: the defect fixed at the source and the catalogue correct because of it, not in spite of it. Your part is an accurate report; a vague one escalates to nothing.
 
 ## Rules
 

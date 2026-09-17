@@ -20,6 +20,7 @@ These environment variables are set by the workflow:
 - `EXTRACT_CMD` — command to extract source strings (may be empty)
 - `FORMAT_CMD` — command to format translation files (may be empty)
 - `BRANCH_PREFIX` — branch name for the combined translation PR (e.g. `chore/translate`)
+- `ESCALATIONS_FILE` — write source defects here for the Escalate workflow to pick up
 - `PR_TITLE_PREFIX` — PR title prefix (e.g. `chore(fe):`)
 
 ## Step 1: Skip if a combined translation PR is already open
@@ -67,6 +68,26 @@ If no language has missing translations, stop and report "Nothing to do".
    as the language allows, and list it in the PR body under a `## Source defects`
    heading, with the source file and line, what no translation can express, and the
    source change that would fix it. Do not reword the translation to hide it.
+
+   Then record each one in `$ESCALATIONS_FILE` as a JSON array, so the Escalate
+   workflow can fix it in the source once this PR exists:
+
+   ```json
+   [
+     {
+       "pr_number": 123,
+       "msgid": "the exact msgid, as it appears in the catalogue",
+       "source_file": "path/to/File.svelte",
+       "source_line": 42,
+       "problem": "what no translation of this entry can express",
+       "proposed_change": "the narrowest source change that would fix it"
+     }
+   ]
+   ```
+
+   Write the file only when there is at least one defect, and only after the PR is
+   open, since each entry needs its number. Write valid JSON or the escalation is
+   skipped.
 
 4. If `$FORMAT_CMD` is non-empty, run it.
 

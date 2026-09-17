@@ -62,6 +62,7 @@ jobs:
           REPO: ${{ matrix.repo.repo }}
           BOT_USER: ${{ needs.matrix.outputs.bot_user }}
           BRANCH_PREFIX: ${{ matrix.repo.branch_prefix }}
+          ESCALATIONS_FILE: ${{ runner.temp }}/escalations.json
         run: |
           set -euo pipefail
           needs_run=false
@@ -287,3 +288,46 @@ jobs:
             exit 1
           fi
           echo "Audit passed — all changed files are within the allowed path set."
+
+      # Each defect becomes one Escalate run, which fixes it in the target
+      # repo's source and pushes onto the translation PR. Skipped when the bot
+      # has already escalated that msgid on that PR, since an escalation
+      # changes msgids and would otherwise be rediscovered on the next run.
+      - name: Dispatch escalations for source defects
+        if: steps.gate.outputs.skip != 'true' && matrix.repo.escalation
+        env:
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
+          ESCALATIONS_FILE: ${{ runner.temp }}/escalations.json
+          TARGET_REPO: ${{ matrix.repo.repo }}
+        run: |
+          set -euo pipefail
+          [ -f "$ESCALATIONS_FILE" ] || { echo "No source defects recorded."; exit 0; }
+          if ! jq -e 'type == "array" and length > 0' "$ESCALATIONS_FILE" >/dev/null 2>&1; then
+            echo "::warning::$ESCALATIONS_FILE is not a non-empty JSON array; nothing to escalate."
+            exit 0
+          fi
+
+          count=$(jq 'length' "$ESCALATIONS_FILE")
+          for i in $(seq 0 $((count - 1))); do
+            defect=$(jq -c ".[$i]" "$ESCALATIONS_FILE")
+            pr=$(echo "$defect" | jq -r '.pr_number // empty')
+            msgid=$(echo "$defect" | jq -r '.msgid // empty')
+            if [ -z "$pr" ] || [ -z "$msgid" ]; then
+              echo "::warning::Skipping defect $i — needs both pr_number and msgid."
+              continue
+            fi
+
+            marker=$(printf '%s' "$msgid" | sha256sum | cut -c1-12)
+            if gh api "repos/$TARGET_REPO/issues/$pr/comments" --paginate --jq '.[].body' \
+                 | grep -qF "<!-- source-defect: $marker"; then
+              echo "Already escalated on #$pr: $msgid"
+              continue
+            fi
+
+            echo "Escalating on #$pr: $msgid"
+            gh workflow run escalate.yml \
+              --repo "${{ github.repository }}" \
+              -f target_repo="$TARGET_REPO" \
+              -f pr_number="$pr" \
+              -f defect="$defect"
+          done

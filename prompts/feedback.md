@@ -21,6 +21,7 @@ You are committing as `$BOT_USER`. All git commits must use this identity (alrea
 - `BRANCH_PREFIX` — branch name prefix
 - `PR_TITLE_PREFIX` — PR title prefix
 - `FEEDBACK_ALLOWLIST` — comma-separated list of allowed commenters
+- `ESCALATIONS_FILE` — write source defects here for the Escalate workflow to pick up
 
 ## Step 0: Determine PR kind
 
@@ -130,6 +131,25 @@ language allows, and reply to the comment with:
 - what the message currently does
 - what no translation of it can express, and why the language needs it
 - the concrete source change that would fix it
+
+Then record it in `$ESCALATIONS_FILE` as a JSON array, so the Escalate workflow
+can fix it in the source:
+
+```json
+[
+  {
+    "pr_number": $PR_NUMBER,
+    "msgid": "the exact msgid, as it appears in the catalogue",
+    "source_file": "path/to/File.svelte",
+    "source_line": 42,
+    "problem": "what no translation of this entry can express",
+    "proposed_change": "the narrowest source change that would fix it"
+  }
+]
+```
+
+Write the file only when there is at least one defect, and write valid JSON or
+the escalation is skipped.
 
 Then stop on that entry. Do not open a rule-proposal PR for it, and do not
 commit a reworded translation alongside the report.

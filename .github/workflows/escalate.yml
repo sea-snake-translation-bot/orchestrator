@@ -1,0 +1,252 @@
+name: Escalate
+
+# Fixes a defect in a managed repo's source that no translation file can fix —
+# a count with no plural structure, a sentence split across messages, a message
+# that needs a context. Dispatched by the Translate and Feedback workflows when
+# they find one, and runnable by hand for a single defect.
+#
+# The commits land on an open translation PR, so a human reviews them before
+# anything merges. Unlike the other workflows, the audit here runs *before* the
+# push rather than after it: Claude commits locally and this workflow decides
+# whether those commits may leave the runner.
+on:
+  workflow_dispatch:
+    inputs:
+      target_repo:
+        description: "Managed repo the defect is in (owner/name)"
+        required: true
+      pr_number:
+        description: "Open translation PR to add the fix to"
+        required: true
+      defect:
+        description: 'JSON: {"msgid","source_file","source_line","problem","proposed_change"}'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  # One at a time per PR — two escalations editing the same branch would race.
+  group: escalate-${{ inputs.target_repo }}-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  escalate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: orchestrator
+
+      - name: Read config
+        id: config
+        working-directory: orchestrator
+        env:
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
+        run: |
+          set -euo pipefail
+          config=$(python3 -c "
+          import yaml, json
+          with open('repos.yml') as f:
+              data = yaml.safe_load(f)
+          repo = [r for r in data['repos'] if r['repo'] == '${{ inputs.target_repo }}']
+          if not repo:
+              raise SystemExit('${{ inputs.target_repo }} is not in repos.yml')
+          print(json.dumps({'bot': data, 'repo': repo[0]}))
+          ")
+          repo=$(echo "$config" | jq '.repo')
+          esc=$(echo "$repo" | jq '.escalation // {}')
+
+          if [ "$(echo "$esc" | jq -r '.enabled // false')" != "true" ]; then
+            echo "::notice::Escalation is not enabled for ${{ inputs.target_repo }}."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+          echo "bot_org=$(echo "$config" | jq -r '.bot.bot_org')" >> "$GITHUB_OUTPUT"
+          echo "bot_user=$(echo "$config" | jq -r '.bot.bot_user')" >> "$GITHUB_OUTPUT"
+          echo "bot_email=$(echo "$config" | jq -r '.bot.bot_email')" >> "$GITHUB_OUTPUT"
+          echo "fork=$(echo "$config" | jq -r '.bot.bot_org')/$(echo '${{ inputs.target_repo }}' | cut -d/ -f2)" >> "$GITHUB_OUTPUT"
+
+          for key in locales_path file_format source_language node_version setup extract format; do
+            echo "$key=$(echo "$repo" | jq -r --arg k "$key" '.[$k] // empty')" >> "$GITHUB_OUTPUT"
+          done
+          echo "verify=$(echo "$esc" | jq -r '.verify // empty')" >> "$GITHUB_OUTPUT"
+          echo "paths=$(echo "$esc" | jq -r '(.paths // []) | join(",")')" >> "$GITHUB_OUTPUT"
+          echo "max_files=$(echo "$esc" | jq -r '.max_files // 10')" >> "$GITHUB_OUTPUT"
+          echo "max_lines=$(echo "$esc" | jq -r '.max_lines // 400')" >> "$GITHUB_OUTPUT"
+
+          head_ref=$(gh pr view "${{ inputs.pr_number }}" --repo "${{ inputs.target_repo }}" --json headRefName,state \
+            --jq 'select(.state == "OPEN") | .headRefName')
+          if [ -z "$head_ref" ]; then
+            echo "::error::PR #${{ inputs.pr_number }} on ${{ inputs.target_repo }} is not open."
+            exit 1
+          fi
+          echo "head_ref=$head_ref" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.config.outputs.enabled == 'true'
+        with:
+          repository: ${{ inputs.target_repo }}
+          path: target
+          fetch-depth: 0
+          token: ${{ secrets.BOT_PAT }}
+
+      - uses: actions/setup-node@v4
+        if: steps.config.outputs.enabled == 'true'
+        with:
+          node-version: ${{ steps.config.outputs.node_version || '20' }}
+
+      - name: Check out the PR branch
+        if: steps.config.outputs.enabled == 'true'
+        id: branch
+        working-directory: target
+        env:
+          BOT_PAT: ${{ secrets.BOT_PAT }}
+        run: |
+          set -euo pipefail
+          git config user.name "${{ steps.config.outputs.bot_user }}"
+          git config user.email "${{ steps.config.outputs.bot_email }}"
+          git remote add fork "https://x-access-token:${BOT_PAT}@github.com/${{ steps.config.outputs.fork }}.git"
+          git fetch fork "${{ steps.config.outputs.head_ref }}"
+          git checkout -B "${{ steps.config.outputs.head_ref }}" FETCH_HEAD
+          echo "base=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup target repo
+        if: steps.config.outputs.enabled == 'true' && steps.config.outputs.setup != ''
+        working-directory: target
+        run: ${{ steps.config.outputs.setup }}
+
+      - name: Install Claude Code CLI
+        if: steps.config.outputs.enabled == 'true'
+        run: npm install -g @anthropic-ai/claude-code@2.1.116
+
+      # Claude may commit but not push: `git push` is absent from the allowed
+      # tools, so the audit below is a gate rather than a report.
+      - name: Run Claude
+        if: steps.config.outputs.enabled == 'true'
+        working-directory: target
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
+          ORCHESTRATOR_DIR: ${{ github.workspace }}/orchestrator
+          TARGET_REPO: ${{ inputs.target_repo }}
+          FORK_REPO: ${{ steps.config.outputs.fork }}
+          BOT_USER: ${{ steps.config.outputs.bot_user }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_HEAD_REF: ${{ steps.config.outputs.head_ref }}
+          DEFECT: ${{ inputs.defect }}
+          LOCALES_PATH: ${{ steps.config.outputs.locales_path }}
+          FILE_FORMAT: ${{ steps.config.outputs.file_format }}
+          SOURCE_LANGUAGE: ${{ steps.config.outputs.source_language }}
+          EXTRACT_CMD: ${{ steps.config.outputs.extract }}
+          FORMAT_CMD: ${{ steps.config.outputs.format }}
+          VERIFY_CMD: ${{ steps.config.outputs.verify }}
+          ESCALATION_PATHS: ${{ steps.config.outputs.paths }}
+          MAX_FILES: ${{ steps.config.outputs.max_files }}
+          MAX_LINES: ${{ steps.config.outputs.max_lines }}
+          COMMENT_FILE: ${{ runner.temp }}/comment.md
+          ESCALATION_REPORT: ${{ runner.temp }}/outcome.txt
+        run: |
+          prompt=$(envsubst < "$ORCHESTRATOR_DIR/prompts/escalate.md")
+          claude -p "$prompt" \
+            --dangerously-skip-permissions \
+            --allowedTools "Bash(git add:*),Bash(git commit:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git rev-parse:*),Bash(git restore:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api repos/${{ inputs.target_repo }}/:*),Bash(npm:*),Bash(yarn:*),Bash(pnpm:*),Bash(npx:*),Bash(awk:*),Bash(grep:*),Bash(sed:*),Bash(cat:*),Bash(basename:*),Bash(echo:*),Bash(jq:*),Bash(wc:*),Bash(head:*),Bash(tail:*),Bash(find:*),Bash(ls:*),Bash(mkdir:*),Bash(cd:*),Bash(printf:*),Bash(sort:*),Bash(uniq:*),Bash(tr:*),Read,Write,Edit,Glob,Grep,Agent"
+
+      - name: Audit the commits before they can leave the runner
+        if: steps.config.outputs.enabled == 'true'
+        id: audit
+        working-directory: target
+        env:
+          BASE: ${{ steps.branch.outputs.base }}
+          ALLOWED: ${{ steps.config.outputs.paths }}
+          LOCALES_PATH: ${{ steps.config.outputs.locales_path }}
+          MAX_FILES: ${{ steps.config.outputs.max_files }}
+          MAX_LINES: ${{ steps.config.outputs.max_lines }}
+        run: |
+          set -euo pipefail
+          head=$(git rev-parse HEAD)
+          if [ "$head" = "$BASE" ]; then
+            echo "No commits were made."
+            echo "pushable=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git diff --numstat "$BASE..$head" > numstat.txt
+          python3 - <<'PY'
+          import os, sys
+
+          allowed = [p.strip().rstrip("/") for p in os.environ["ALLOWED"].split(",") if p.strip()]
+          allowed.append(os.environ["LOCALES_PATH"].rstrip("/"))
+
+          files, lines, violations = 0, 0, []
+          for row in open("numstat.txt"):
+              added, removed, path = row.rstrip("\n").split("\t", 2)
+              files += 1
+              lines += sum(int(n) for n in (added, removed) if n != "-")
+              if path.startswith(".github/") or not any(
+                  path == a or path.startswith(a + "/") for a in allowed
+              ):
+                  violations.append(path)
+
+          if violations:
+              print("::error::Changed files outside the paths escalation may touch:")
+              for path in violations:
+                  print(f"  {path}")
+              print(f"::error::Allowed prefixes: {', '.join(allowed)} (never .github/)")
+              sys.exit(1)
+
+          max_files, max_lines = int(os.environ["MAX_FILES"]), int(os.environ["MAX_LINES"])
+          if files > max_files or lines > max_lines:
+              print(
+                  f"::error::Diff is {files} files and {lines} lines, over the "
+                  f"{max_files}/{max_lines} an escalation may make. A fix this size "
+                  f"belongs in a pull request a human opens."
+              )
+              sys.exit(1)
+
+          print(f"Audit passed — {files} files, {lines} lines, all within the allowed paths.")
+          PY
+          rm -f numstat.txt
+          echo "pushable=true" >> "$GITHUB_OUTPUT"
+
+      - name: Push to the PR branch
+        if: steps.config.outputs.enabled == 'true' && steps.audit.outputs.pushable == 'true'
+        working-directory: target
+        run: |
+          set -euo pipefail
+          git push fork "HEAD:${{ steps.config.outputs.head_ref }}"
+
+      # Posted whatever the outcome: a defect the bot could not fix is still
+      # worth telling the reviewer about. The marker stops a later run from
+      # escalating the same msgid again.
+      - name: Comment on the PR
+        if: always() && steps.config.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
+          COMMENT_FILE: ${{ runner.temp }}/comment.md
+          ESCALATION_REPORT: ${{ runner.temp }}/outcome.txt
+          DEFECT: ${{ inputs.defect }}
+        run: |
+          set -euo pipefail
+          marker=$(printf '%s' "$DEFECT" | jq -r '.msgid' | sha256sum | cut -c1-12)
+          outcome=$([ -f "$ESCALATION_REPORT" ] && tr -d '\n' < "$ESCALATION_REPORT" || echo "failed")
+
+          {
+            if [ -f "$COMMENT_FILE" ]; then
+              cat "$COMMENT_FILE"
+            else
+              echo "The escalation run for this source defect ended without a report."
+              echo
+              echo '```json'
+              printf '%s\n' "$DEFECT"
+              echo '```'
+              echo
+              echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            fi
+            echo
+            echo "<!-- source-defect: $marker outcome=$outcome -->"
+          } > body.md
+
+          gh pr comment "${{ inputs.pr_number }}" --repo "${{ inputs.target_repo }}" --body-file body.md
