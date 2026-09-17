@@ -47,9 +47,8 @@ matrix=$(echo "$repos" | jq --arg org "$bot_org" '[.[] | {
   branch_prefix:     (.branch_prefix // "translate"),
   pr_title_prefix:   (.pr_title_prefix // "chore:"),
   context_audit:     (.context_audit // false),
+  escalation:        ((.escalation.enabled // false)),
   source_paths:      ((.source_paths // []) | join(",")),
-  default_reviewers: ((.default_reviewers // []) | join(",")),
-  language_reviewers: ((.language_reviewers // {}) | to_entries | map(.key + "=" + .value) | join(",")),
   feedback_allowlist: ((.feedback_allowlist // []) | join(","))
 }]')
 

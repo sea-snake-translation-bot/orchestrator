@@ -20,9 +20,8 @@ You are committing as `$BOT_USER`. All git commits must use this identity (alrea
 - `EXTRACT_CMD` / `FORMAT_CMD` — build commands (may be empty)
 - `BRANCH_PREFIX` — branch name prefix
 - `PR_TITLE_PREFIX` — PR title prefix
-- `DEFAULT_REVIEWERS` — comma-separated reviewer list
-- `LANGUAGE_REVIEWERS` — comma-separated `lang=user` pairs
 - `FEEDBACK_ALLOWLIST` — comma-separated list of allowed commenters
+- `ESCALATIONS_FILE` — write source defects here for the Escalate workflow to pick up
 
 ## Step 0: Determine PR kind
 
@@ -99,16 +98,63 @@ You cannot push to a merged branch. Instead, route the fix into the combined tra
    gh pr create --repo $TARGET_REPO --head "$BOT_ORG:$BRANCH_PREFIX" --base main ...
    ```
 
-7. Add reviewers from `$DEFAULT_REVIEWERS` plus the language-specific reviewers from `$LANGUAGE_REVIEWERS` for any language touched by this fix.
-
-8. Reply to each original comment on the merged PR with a link to the open/new combined PR.
+7. Reply to each original comment on the merged PR with a link to the open/new combined PR.
 
 ## Step 3: Classify each comment
 
+Decide the class before applying anything. Ask first whether any translation of
+this entry could be correct, because that is the question that decides where the
+fix belongs.
+
+- **Source defect**: no translation of the entry can be correct, because the
+  limitation is in how the source message is built. Read
+  `$ORCHESTRATOR_DIR/rules/general/source-defects.md` for the cases and what to
+  do. You have no write access to `$TARGET_REPO`'s source and must not change
+  files outside `$LOCALES_PATH`, so the fix is a report, not an edit. Handle it
+  in Step 4 instead of Step 2.
 - **Narrow**: a fix to a specific translation. Nothing further needed beyond the fix.
 - **Broad**: feedback that implies a pattern or rule for future translations (e.g. "always use formal 'you' in German", "prefer X over Y").
 
-## Step 4: Rule-proposal PR for broad feedback
+A grammar complaint is not automatically narrow. When a reviewer says a count
+does not agree with its noun, check whether the entry is an ICU plural at all.
+If it is, extend its categories — that is a narrow fix. If the count is
+interpolated into a message with no plural structure, no set of words in that
+one msgid is right for every count, and it is a source defect.
+
+## Step 4: Report a source defect
+
+Do not translate around it. Leave the entry as faithful to the source as the
+language allows, and reply to the comment with:
+
+- the source file and line the message comes from, found by searching
+  `$TARGET_REPO`'s source for the msgid
+- what the message currently does
+- what no translation of it can express, and why the language needs it
+- the concrete source change that would fix it
+
+Then record it in `$ESCALATIONS_FILE` as a JSON array, so the Escalate workflow
+can fix it in the source:
+
+```json
+[
+  {
+    "pr_number": $PR_NUMBER,
+    "msgid": "the exact msgid, as it appears in the catalogue",
+    "source_file": "path/to/File.svelte",
+    "source_line": 42,
+    "problem": "what no translation of this entry can express",
+    "proposed_change": "the narrowest source change that would fix it"
+  }
+]
+```
+
+Write the file only when there is at least one defect, and write valid JSON or
+the escalation is skipped.
+
+Then stop on that entry. Do not open a rule-proposal PR for it, and do not
+commit a reworded translation alongside the report.
+
+## Step 5: Rule-proposal PR for broad feedback
 
 For each broad comment, create a rule-proposal PR on the **orchestrator** repo (`$GITHUB_REPOSITORY`):
 
@@ -121,6 +167,10 @@ For each broad comment, create a rule-proposal PR on the **orchestrator** repo (
    - **Repo-specific rule** → add to or create a file in `rules/$TARGET_REPO/`. Use descriptive filenames (e.g. `russian.md`, `terminology.md`).
 
 4. The rule text should be self-contained and prescriptive.
+
+   Never propose a rule that works around a source defect. If the honest rule
+   would be "reword the translation because the source cannot express this",
+   the feedback is a source defect: report it under Step 4 and open no rule PR.
 
 5. Commit and push to the orchestrator's `origin`:
    ```
@@ -151,6 +201,7 @@ For each broad comment, create a rule-proposal PR on the **orchestrator** repo (
 ## Important
 
 - Only fix what the reviewer asked for — do not add new translations or make unrelated changes.
+- A fix that belongs in `$TARGET_REPO`'s source is reported, never worked around in the catalogue.
 - Preserve all variables (like `{variable}`) and tags (like `<0>...</0>`).
 - Always reply to every comment from allowed users.
 - Always push translation fixes to the `fork` remote, never to `origin`.

@@ -20,9 +20,8 @@ These environment variables are set by the workflow:
 - `EXTRACT_CMD` — command to extract source strings (may be empty)
 - `FORMAT_CMD` — command to format translation files (may be empty)
 - `BRANCH_PREFIX` — branch name for the combined translation PR (e.g. `chore/translate`)
+- `ESCALATIONS_FILE` — write source defects here for the Escalate workflow to pick up
 - `PR_TITLE_PREFIX` — PR title prefix (e.g. `chore(fe):`)
-- `DEFAULT_REVIEWERS` — comma-separated list of reviewers for every PR
-- `LANGUAGE_REVIEWERS` — comma-separated `lang=user` pairs (e.g. `it=Alice,fr=Bob`)
 
 ## Step 1: Skip if a combined translation PR is already open
 
@@ -62,6 +61,34 @@ If no language has missing translations, stop and report "Nothing to do".
 
 3. For each language with missing entries, translate all empty/missing entries. Follow all rules you read earlier (general + repo-specific). Process every language in this single run.
 
+   If an entry cannot be translated correctly in some language because of how the
+   source message is built — a count with no plural structure, a sentence split
+   across msgids, an ambiguity with no `msgctxt` — that is a source defect. Follow
+   `$ORCHESTRATOR_DIR/rules/general/source-defects.md`: translate it as faithfully
+   as the language allows, and list it in the PR body under a `## Source defects`
+   heading, with the source file and line, what no translation can express, and the
+   source change that would fix it. Do not reword the translation to hide it.
+
+   Then record each one in `$ESCALATIONS_FILE` as a JSON array, so the Escalate
+   workflow can fix it in the source once this PR exists:
+
+   ```json
+   [
+     {
+       "pr_number": 123,
+       "msgid": "the exact msgid, as it appears in the catalogue",
+       "source_file": "path/to/File.svelte",
+       "source_line": 42,
+       "problem": "what no translation of this entry can express",
+       "proposed_change": "the narrowest source change that would fix it"
+     }
+   ]
+   ```
+
+   Write the file only when there is at least one defect, and only after the PR is
+   open, since each entry needs its number. Write valid JSON or the escalation is
+   skipped.
+
 4. If `$FORMAT_CMD` is non-empty, run it.
 
 5. Stage ONLY the translation files inside `$LOCALES_PATH` for the languages you actually updated. Build commands may touch other files — do not include those.
@@ -96,26 +123,6 @@ If no language has missing translations, stop and report "Nothing to do".
    - …
    ```
 
-## Step 4: Add reviewers
-
-After opening the PR, add reviewers:
-
-```
-gh pr edit <number> --repo $TARGET_REPO --add-reviewer <users>
-```
-
-Always request review from every user in `$DEFAULT_REVIEWERS`.
-
-Additionally, check `$LANGUAGE_REVIEWERS` for entries matching the languages that were updated. For each language-specific reviewer whose language is included in this PR, add them as a reviewer too. Then leave a single comment that tags each such reviewer with the language they cover:
-
-> Language-specific review requests:
-> - `<lang>`: @<user>
-> - `<lang>`: @<user>
->
-> This PR may already be merged by the time you see it, but if you spot any translation mistakes feel free to leave comments or suggestions here — they'll be picked up by AI in a future run. Besides specific fixes, broader feedback is also welcome (e.g., tone, terminology preferences, style guidelines) — these will be reviewed and applied across all future translations.
-
-If no language in this PR has a matching entry in `$LANGUAGE_REVIEWERS`, skip the comment.
-
 ## Important
 
 - One combined PR for all languages, never one PR per language.
@@ -123,5 +130,6 @@ If no language in this PR has a matching entry in `$LANGUAGE_REVIEWERS`, skip th
 - Do not touch files for languages that have all translations filled in.
 - Skip the source language (`$SOURCE_LANGUAGE`).
 - Always push to the `fork` remote, never to `origin`.
+- A problem that can only be fixed in `$TARGET_REPO`'s source is reported in the PR body, never worked around in a translation.
 - The branch is based on `origin/main` and stays that way. If a push to the fork is rejected, report the rejection — never rebase onto `fork/main` to get the push through, because that silently moves the PR onto a stale base.
 - Always create the PR with `--repo $TARGET_REPO --head $BOT_ORG:$BRANCH_PREFIX`.

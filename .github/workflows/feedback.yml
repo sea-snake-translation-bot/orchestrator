@@ -3,7 +3,10 @@ name: Feedback
 # Polls for unaddressed reviewer feedback on bot-created translation PRs.
 on:
   schedule:
-    - cron: "*/15 * * * *" # every 15 minutes
+      # GitHub delays and drops scheduled runs, and does not honour short
+      # intervals: measured over a day, this fires every 2-5 hours, not at
+      # the interval below. Anything that needs to happen now is dispatched.
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -88,9 +91,8 @@ jobs:
           echo "format=$(echo "$config" | jq -r '.format // empty')" >> "$GITHUB_OUTPUT"
           echo "branch_prefix=$(echo "$config" | jq -r '.branch_prefix // "translate"')" >> "$GITHUB_OUTPUT"
           echo "pr_title_prefix=$(echo "$config" | jq -r '.pr_title_prefix // "chore:"')" >> "$GITHUB_OUTPUT"
-          echo "default_reviewers=$(echo "$config" | jq -r '(.default_reviewers // []) | join(",")')" >> "$GITHUB_OUTPUT"
-          echo "language_reviewers=$(echo "$config" | jq -r '(.language_reviewers // {}) | to_entries | map(.key + "=" + .value) | join(",")')" >> "$GITHUB_OUTPUT"
           echo "feedback_allowlist=$(echo "$config" | jq -r '(.feedback_allowlist // []) | join(",")')" >> "$GITHUB_OUTPUT"
+          echo "escalation=$(echo "$config" | jq -r '.escalation.enabled // false')" >> "$GITHUB_OUTPUT"
 
       - name: Setup target repo
         if: steps.repo-config.outputs.setup != ''
@@ -109,6 +111,12 @@ jobs:
           git config user.email "${{ needs.discover.outputs.bot_email }}"
           git remote add fork "https://x-access-token:${BOT_PAT}@github.com/${{ matrix.pr.fork }}.git"
           git fetch fork
+
+      - name: Snapshot branch refs
+        working-directory: target
+        run: |
+          git for-each-ref --format='%(refname:short)=%(objectname)' \
+            refs/heads/ refs/remotes/fork/ > "$RUNNER_TEMP/pre-refs.txt"
 
       - name: Run Claude
         working-directory: target
@@ -129,11 +137,72 @@ jobs:
           FORMAT_CMD: ${{ steps.repo-config.outputs.format }}
           BRANCH_PREFIX: ${{ steps.repo-config.outputs.branch_prefix }}
           PR_TITLE_PREFIX: ${{ steps.repo-config.outputs.pr_title_prefix }}
-          DEFAULT_REVIEWERS: ${{ steps.repo-config.outputs.default_reviewers }}
-          LANGUAGE_REVIEWERS: ${{ steps.repo-config.outputs.language_reviewers }}
           FEEDBACK_ALLOWLIST: ${{ steps.repo-config.outputs.feedback_allowlist }}
+          ESCALATIONS_FILE: ${{ runner.temp }}/escalations.json
         run: |
           prompt=$(envsubst < "$ORCHESTRATOR_DIR/prompts/feedback.md")
           claude -p "$prompt" \
             --dangerously-skip-permissions \
-            --allowedTools "Bash(git:*),Bash(gh pr:*),Bash(gh api repos/${{ matrix.pr.repo }}/:*),Bash(gh api graphql:*),Bash(npm:*),Bash(yarn:*),Bash(pnpm:*),Bash(awk:*),Bash(grep:*),Bash(sed:*),Bash(cat:*),Bash(basename:*),Bash(echo:*),Bash(jq:*),Bash(wc:*),Bash(head:*),Bash(tail:*),Bash(date:*),Bash(find:*),Bash(ls:*),Bash(mkdir:*),Bash(cd:*),Bash(envsubst:*),Bash(printf:*),Bash(sort:*),Bash(uniq:*),Bash(tr:*),Read,Write,Edit,Glob,Grep,Agent"
+            --allowedTools "Bash(git:*),Bash(gh pr create:*),Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api repos/${{ matrix.pr.repo }}/:*),Bash(gh api graphql:*),Bash(npm:*),Bash(yarn:*),Bash(pnpm:*),Bash(awk:*),Bash(grep:*),Bash(sed:*),Bash(cat:*),Bash(basename:*),Bash(echo:*),Bash(jq:*),Bash(wc:*),Bash(head:*),Bash(tail:*),Bash(date:*),Bash(find:*),Bash(ls:*),Bash(mkdir:*),Bash(cd:*),Bash(envsubst:*),Bash(printf:*),Bash(sort:*),Bash(uniq:*),Bash(tr:*),Read,Write,Edit,Glob,Grep,Agent"
+
+      # Feedback fixes translations; a fix that belongs in source goes through
+      # Escalate, which gates its own diff before pushing. So anything this run
+      # changed outside the locales path is a mistake, and the run says so
+      # rather than leaving it to be noticed in review. The prompt pushes as
+      # part of its own flow, so this reports rather than prevents.
+      - name: Audit Claude changes
+        if: always()
+        working-directory: target
+        env:
+          LOCALES_PATH: ${{ steps.repo-config.outputs.locales_path }}
+        run: |
+          bash "$GITHUB_WORKSPACE/orchestrator/scripts/audit-claude-changes.sh" \
+            "$RUNNER_TEMP/pre-refs.txt" \
+            "$LOCALES_PATH/*" \
+            || {
+              echo "::error::A fix that belongs in source goes through the Escalate workflow."
+              exit 1
+            }
+
+      # Each defect becomes one Escalate run, which fixes it in the target
+      # repo's source and pushes onto the translation PR. Skipped when the bot
+      # has already escalated that msgid on that PR, since an escalation
+      # changes msgids and would otherwise be rediscovered on the next run.
+      - name: Dispatch escalations for source defects
+        if: steps.repo-config.outputs.escalation == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
+          ESCALATIONS_FILE: ${{ runner.temp }}/escalations.json
+          TARGET_REPO: ${{ matrix.pr.repo }}
+        run: |
+          set -euo pipefail
+          [ -f "$ESCALATIONS_FILE" ] || { echo "No source defects recorded."; exit 0; }
+          if ! jq -e 'type == "array" and length > 0' "$ESCALATIONS_FILE" >/dev/null 2>&1; then
+            echo "::warning::$ESCALATIONS_FILE is not a non-empty JSON array; nothing to escalate."
+            exit 0
+          fi
+
+          count=$(jq 'length' "$ESCALATIONS_FILE")
+          for i in $(seq 0 $((count - 1))); do
+            defect=$(jq -c ".[$i]" "$ESCALATIONS_FILE")
+            pr=$(echo "$defect" | jq -r '.pr_number // empty')
+            msgid=$(echo "$defect" | jq -r '.msgid // empty')
+            if [ -z "$pr" ] || [ -z "$msgid" ]; then
+              echo "::warning::Skipping defect $i — needs both pr_number and msgid."
+              continue
+            fi
+
+            marker=$(printf '%s' "$msgid" | sha256sum | cut -c1-12)
+            if gh api "repos/$TARGET_REPO/issues/$pr/comments" --paginate --jq '.[].body' \
+                 | grep -qF "<!-- source-defect: $marker"; then
+              echo "Already escalated on #$pr: $msgid"
+              continue
+            fi
+
+            echo "Escalating on #$pr: $msgid"
+            gh workflow run escalate.yml \
+              --repo "${{ github.repository }}" \
+              -f target_repo="$TARGET_REPO" \
+              -f pr_number="$pr" \
+              -f defect="$defect"
+          done

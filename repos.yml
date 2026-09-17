@@ -34,19 +34,27 @@ repos:
     pr_title_prefix: "chore(fe):"
     # Enable weekly context-audit sweeps (adds translator context to source files)
     context_audit: false
+    # Lets the bot fix a defect in this repo's source when no translation can
+    # fix it — a count with no plural structure, a sentence split across
+    # messages, a message that needs a context. The commits land on the open
+    # translation PR, so a human still reviews them.
+    escalation:
+      enabled: true
+      # Path prefixes the escalation may change, besides locales_path.
+      # `.github/` is never allowed, whatever is listed here.
+      paths:
+        - src/frontend/src
+        - src/lingui-svelte
+      # Caps on one escalation's diff. Over these it reports instead of
+      # committing, because a change that size wants a human to open the PR.
+      max_files: 8
+      max_lines: 300
+      # Must pass before anything is committed.
+      verify: npx vitest run --config ./vitest.config.ts src/lingui-svelte
     # Source file globs for context audit
     source_paths:
       - src/frontend/src/lib/**/*.svelte
       - src/frontend/src/routes/**/*.svelte
-    # Reviewers added to every translation PR
-    default_reviewers:
-      - aterga
-      - sea-snake
-    # Additional reviewers per language code
-    language_reviewers:
-      it: AntonioVentilii
-      fr: mducroux
-      de: marc0olo
     # Users whose PR feedback the bot will process (everyone else is ignored)
     feedback_allowlist:
       - AntonioVentilii

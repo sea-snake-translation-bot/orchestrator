@@ -114,8 +114,8 @@ jobs:
       - name: Snapshot branch refs
         working-directory: target
         run: |
-          git for-each-ref --format='%(refname:short)=%(objectname)' refs/heads/ \
-            > "$RUNNER_TEMP/pre-refs.txt"
+          git for-each-ref --format='%(refname:short)=%(objectname)' \
+            refs/heads/ refs/remotes/fork/ > "$RUNNER_TEMP/pre-refs.txt"
 
       - name: Run Claude
         working-directory: target
@@ -135,42 +135,17 @@ jobs:
           FORMAT_CMD: ${{ matrix.repo.format }}
           BRANCH_PREFIX: ${{ matrix.repo.branch_prefix }}
           PR_TITLE_PREFIX: ${{ matrix.repo.pr_title_prefix }}
-          DEFAULT_REVIEWERS: ${{ matrix.repo.default_reviewers }}
         run: |
           prompt=$(envsubst < "$ORCHESTRATOR_DIR/prompts/context-audit.md")
           claude -p "$prompt" \
             --dangerously-skip-permissions \
-            --allowedTools "Bash(git:*),Bash(gh pr:*),Bash(gh api repos/${{ matrix.repo.repo }}/:*),Bash(gh api graphql:*),Bash(npm:*),Bash(yarn:*),Bash(pnpm:*),Bash(awk:*),Bash(grep:*),Bash(sed:*),Bash(cat:*),Bash(basename:*),Bash(echo:*),Bash(jq:*),Bash(wc:*),Bash(head:*),Bash(tail:*),Bash(date:*),Bash(find:*),Bash(ls:*),Bash(mkdir:*),Bash(cd:*),Bash(envsubst:*),Bash(printf:*),Bash(sort:*),Bash(uniq:*),Bash(tr:*),Read,Write,Edit,Glob,Grep,Agent"
+            --allowedTools "Bash(git:*),Bash(gh pr create:*),Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api repos/${{ matrix.repo.repo }}/:*),Bash(gh api graphql:*),Bash(npm:*),Bash(yarn:*),Bash(pnpm:*),Bash(awk:*),Bash(grep:*),Bash(sed:*),Bash(cat:*),Bash(basename:*),Bash(echo:*),Bash(jq:*),Bash(wc:*),Bash(head:*),Bash(tail:*),Bash(date:*),Bash(find:*),Bash(ls:*),Bash(mkdir:*),Bash(cd:*),Bash(envsubst:*),Bash(printf:*),Bash(sort:*),Bash(uniq:*),Bash(tr:*),Read,Write,Edit,Glob,Grep,Agent"
 
       - name: Audit Claude changes
         if: always()
         working-directory: target
         run: |
-          set -euo pipefail
-          violations=()
-          while IFS='=' read -r ref sha; do
-            pre_sha=$(grep "^${ref}=" "$RUNNER_TEMP/pre-refs.txt" 2>/dev/null | cut -d= -f2 || true)
-            if [ -z "$pre_sha" ]; then
-              base="origin/main"
-            elif [ "$pre_sha" != "$sha" ]; then
-              base="$pre_sha"
-            else
-              continue
-            fi
-            files=$(git diff --name-only "$base..$sha" 2>/dev/null || true)
-            [ -z "$files" ] && continue
-            while IFS= read -r f; do
-              case "$f" in
-                ${{ matrix.repo.locales_path }}/*) ;;
-                *.svelte|*.tsx|*.jsx|*.vue|*.ts|*.js) ;;
-                *) violations+=("$ref: $f") ;;
-              esac
-            done <<< "$files"
-          done < <(git for-each-ref --format='%(refname:short)=%(objectname)' refs/heads/)
-
-          if [ ${#violations[@]} -gt 0 ]; then
-            echo "::error::Claude modified unexpected files:"
-            printf '  %s\n' "${violations[@]}"
-            exit 1
-          fi
-          echo "Audit passed."
+          bash "$GITHUB_WORKSPACE/orchestrator/scripts/audit-claude-changes.sh" \
+            "$RUNNER_TEMP/pre-refs.txt" \
+            '${{ matrix.repo.locales_path }}/*' \
+            '*.svelte' '*.tsx' '*.jsx' '*.vue' '*.ts' '*.js'
