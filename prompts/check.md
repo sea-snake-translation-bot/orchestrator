@@ -37,7 +37,10 @@ If there is already an open PR on the `$BRANCH_PREFIX` branch, stop and report "
 
 For each translation file in `$LOCALES_PATH` (skip the source language `$SOURCE_LANGUAGE`), record which languages have missing entries:
 
-- **`.po` files**: entries with empty `msgstr ""` (excluding the header entry where `msgid ""`)
+- **`.po` files**: entries with an empty `msgstr` (excluding the header entry where `msgid ""`).
+  A msgstr wrapped over several lines opens with `msgstr ""` and carries its text on the
+  continuation lines below, so an entry is untranslated only when no continuation line
+  follows. The same holds for each `msgstr[n]` of a plural entry.
 - **`.json` files**: keys with empty string values, or keys present in the source file but missing in the translation file
 - **`.yaml`/`.yml` files**: same as JSON — missing or empty keys
 - **`.xliff` files**: `<target>` elements that are empty or have `state="new"`
