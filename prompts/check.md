@@ -21,8 +21,6 @@ These environment variables are set by the workflow:
 - `FORMAT_CMD` — command to format translation files (may be empty)
 - `BRANCH_PREFIX` — branch name for the combined translation PR (e.g. `chore/translate`)
 - `PR_TITLE_PREFIX` — PR title prefix (e.g. `chore(fe):`)
-- `DEFAULT_REVIEWERS` — comma-separated list of reviewers for every PR
-- `LANGUAGE_REVIEWERS` — comma-separated `lang=user` pairs (e.g. `it=Alice,fr=Bob`)
 
 ## Step 1: Skip if a combined translation PR is already open
 
@@ -103,26 +101,6 @@ If no language has missing translations, stop and report "Nothing to do".
    - `<lang>`: translated missing entries in `$LOCALES_PATH/<filename>`
    - …
    ```
-
-## Step 4: Add reviewers
-
-After opening the PR, add reviewers:
-
-```
-gh pr edit <number> --repo $TARGET_REPO --add-reviewer <users>
-```
-
-Always request review from every user in `$DEFAULT_REVIEWERS`.
-
-Additionally, check `$LANGUAGE_REVIEWERS` for entries matching the languages that were updated. For each language-specific reviewer whose language is included in this PR, add them as a reviewer too. Then leave a single comment that tags each such reviewer with the language they cover:
-
-> Language-specific review requests:
-> - `<lang>`: @<user>
-> - `<lang>`: @<user>
->
-> This PR may already be merged by the time you see it, but if you spot any translation mistakes feel free to leave comments or suggestions here — they'll be picked up by AI in a future run. Besides specific fixes, broader feedback is also welcome (e.g., tone, terminology preferences, style guidelines) — these will be reviewed and applied across all future translations.
-
-If no language in this PR has a matching entry in `$LANGUAGE_REVIEWERS`, skip the comment.
 
 ## Important
 

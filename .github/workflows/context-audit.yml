@@ -135,7 +135,6 @@ jobs:
           FORMAT_CMD: ${{ matrix.repo.format }}
           BRANCH_PREFIX: ${{ matrix.repo.branch_prefix }}
           PR_TITLE_PREFIX: ${{ matrix.repo.pr_title_prefix }}
-          DEFAULT_REVIEWERS: ${{ matrix.repo.default_reviewers }}
         run: |
           prompt=$(envsubst < "$ORCHESTRATOR_DIR/prompts/context-audit.md")
           claude -p "$prompt" \

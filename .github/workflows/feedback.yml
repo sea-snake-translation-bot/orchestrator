@@ -88,8 +88,6 @@ jobs:
           echo "format=$(echo "$config" | jq -r '.format // empty')" >> "$GITHUB_OUTPUT"
           echo "branch_prefix=$(echo "$config" | jq -r '.branch_prefix // "translate"')" >> "$GITHUB_OUTPUT"
           echo "pr_title_prefix=$(echo "$config" | jq -r '.pr_title_prefix // "chore:"')" >> "$GITHUB_OUTPUT"
-          echo "default_reviewers=$(echo "$config" | jq -r '(.default_reviewers // []) | join(",")')" >> "$GITHUB_OUTPUT"
-          echo "language_reviewers=$(echo "$config" | jq -r '(.language_reviewers // {}) | to_entries | map(.key + "=" + .value) | join(",")')" >> "$GITHUB_OUTPUT"
           echo "feedback_allowlist=$(echo "$config" | jq -r '(.feedback_allowlist // []) | join(",")')" >> "$GITHUB_OUTPUT"
 
       - name: Setup target repo
@@ -129,8 +127,6 @@ jobs:
           FORMAT_CMD: ${{ steps.repo-config.outputs.format }}
           BRANCH_PREFIX: ${{ steps.repo-config.outputs.branch_prefix }}
           PR_TITLE_PREFIX: ${{ steps.repo-config.outputs.pr_title_prefix }}
-          DEFAULT_REVIEWERS: ${{ steps.repo-config.outputs.default_reviewers }}
-          LANGUAGE_REVIEWERS: ${{ steps.repo-config.outputs.language_reviewers }}
           FEEDBACK_ALLOWLIST: ${{ steps.repo-config.outputs.feedback_allowlist }}
         run: |
           prompt=$(envsubst < "$ORCHESTRATOR_DIR/prompts/feedback.md")

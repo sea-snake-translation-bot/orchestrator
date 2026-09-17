@@ -38,15 +38,6 @@ repos:
     source_paths:
       - src/frontend/src/lib/**/*.svelte
       - src/frontend/src/routes/**/*.svelte
-    # Reviewers added to every translation PR
-    default_reviewers:
-      - aterga
-      - sea-snake
-    # Additional reviewers per language code
-    language_reviewers:
-      it: AntonioVentilii
-      fr: mducroux
-      de: marc0olo
     # Users whose PR feedback the bot will process (everyone else is ignored)
     feedback_allowlist:
       - AntonioVentilii

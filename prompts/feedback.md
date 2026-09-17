@@ -20,8 +20,6 @@ You are committing as `$BOT_USER`. All git commits must use this identity (alrea
 - `EXTRACT_CMD` / `FORMAT_CMD` — build commands (may be empty)
 - `BRANCH_PREFIX` — branch name prefix
 - `PR_TITLE_PREFIX` — PR title prefix
-- `DEFAULT_REVIEWERS` — comma-separated reviewer list
-- `LANGUAGE_REVIEWERS` — comma-separated `lang=user` pairs
 - `FEEDBACK_ALLOWLIST` — comma-separated list of allowed commenters
 
 ## Step 0: Determine PR kind
@@ -99,9 +97,7 @@ You cannot push to a merged branch. Instead, route the fix into the combined tra
    gh pr create --repo $TARGET_REPO --head "$BOT_ORG:$BRANCH_PREFIX" --base main ...
    ```
 
-7. Add reviewers from `$DEFAULT_REVIEWERS` plus the language-specific reviewers from `$LANGUAGE_REVIEWERS` for any language touched by this fix.
-
-8. Reply to each original comment on the merged PR with a link to the open/new combined PR.
+7. Reply to each original comment on the merged PR with a link to the open/new combined PR.
 
 ## Step 3: Classify each comment
 

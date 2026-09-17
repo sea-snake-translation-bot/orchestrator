@@ -17,7 +17,6 @@ You are committing as `$BOT_USER`. All git commits must use this identity (alrea
 - `EXTRACT_CMD` / `FORMAT_CMD` — build commands (may be empty)
 - `BRANCH_PREFIX` — branch name prefix
 - `PR_TITLE_PREFIX` — PR title prefix
-- `DEFAULT_REVIEWERS` — comma-separated reviewer list
 
 ## Step 1: Skip if a context-audit PR is already open
 
@@ -102,7 +101,6 @@ If `$EXTRACT_CMD` is non-empty, run it. If `$FORMAT_CMD` is non-empty, run it. N
    - Budget reached at 40 annotations; <count> additional candidates deferred to next sweep
    ```
 
-5. Add reviewers: `gh pr edit <number> --repo $TARGET_REPO --add-reviewer <$DEFAULT_REVIEWERS>`.
 
 ## Important
 
