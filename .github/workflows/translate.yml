@@ -175,6 +175,28 @@ jobs:
         if: steps.gate.outputs.skip != 'true'
         run: npm install -g @anthropic-ai/claude-code@2.1.116
 
+      # Runs before the fork remote is fetched, so the refs the next step
+      # brings in are the synced ones. A fork left behind upstream would put
+      # the translation commit on a stale base, so a failure here fails the job.
+      - name: Sync fork
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
+        run: |
+          set -euo pipefail
+          gh repo sync "${{ matrix.repo.fork }}" \
+            --source "${{ matrix.repo.repo }}" --force
+          branch=$(gh api "repos/${{ matrix.repo.repo }}" --jq .default_branch)
+          upstream=$(gh api "repos/${{ matrix.repo.repo }}/commits/$branch" --jq .sha)
+          fork=$(gh api "repos/${{ matrix.repo.fork }}/commits/$branch" --jq .sha)
+          if [ "$upstream" != "$fork" ]; then
+            echo "::error::Fork $branch is at $fork, upstream is at $upstream."
+            echo "::error::gh repo sync reported success but the fork is still behind."
+            echo "::error::BOT_PAT needs the 'workflow' scope to sync commits that touch .github/workflows."
+            exit 1
+          fi
+          echo "Fork $branch synced to $upstream."
+
       - name: Configure git and fork remote
         if: steps.gate.outputs.skip != 'true'
         working-directory: target
@@ -185,14 +207,6 @@ jobs:
           git config user.email "${{ needs.matrix.outputs.bot_email }}"
           git remote add fork "https://x-access-token:${BOT_PAT}@github.com/${{ matrix.repo.fork }}.git"
           git fetch fork
-
-      - name: Sync fork
-        if: steps.gate.outputs.skip != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.BOT_PAT }}
-        run: |
-          gh repo sync "${{ matrix.repo.fork }}" \
-            --source "${{ matrix.repo.repo }}" --force 2>/dev/null || true
 
       - name: Snapshot branch refs
         if: steps.gate.outputs.skip != 'true'

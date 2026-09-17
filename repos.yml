@@ -1,6 +1,8 @@
 # ── Bot identity ─────────────────────────────────────────────────
 # GitHub account where forks are created.
-# A classic PAT (public_repo scope) from this account goes into the BOT_PAT secret.
+# A classic PAT from this account goes into the BOT_PAT secret.
+# Scopes: public_repo and workflow. Without `workflow` the fork cannot be synced
+# past any upstream commit that touches .github/workflows/.
 bot_org: sea-snake-translation-bot
 bot_user: sea-snake-translation-bot
 bot_email: sea-snake-translation-bot@users.noreply.github.com

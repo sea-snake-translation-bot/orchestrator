@@ -14,7 +14,9 @@ Centralized bot that automates translation maintenance for any public GitHub rep
 
 Two secrets in this repo:
 
-- `BOT_PAT` — classic PAT with `public_repo` scope from the bot's GitHub account
+- `BOT_PAT` — classic PAT from the bot's GitHub account, scopes `public_repo` and `workflow`.
+  `workflow` is what lets the fork be synced: a sync that carries a commit touching
+  `.github/workflows/` is rejected without it, and the fork then falls behind upstream.
 - `ANTHROPIC_API_KEY` — for Claude Code CLI
 
 ## Files

@@ -47,7 +47,13 @@ If no language has missing translations, stop and report "Nothing to do".
 
 ## Step 3: Create one combined PR for all languages
 
-1. Create a branch `$BRANCH_PREFIX` from the latest default branch (e.g. `chore/translate`). Do not append a language suffix — there is one branch and one PR per cycle.
+1. Create the branch from upstream's default branch, which the `target` checkout has as `origin/main`:
+
+   ```
+   git checkout -b $BRANCH_PREFIX origin/main
+   ```
+
+   Do not append a language suffix — there is one branch and one PR per cycle. Do not base the branch on `fork/main` and do not rebase onto it: the fork is synced before this step, so `origin/main` is the base that makes the PR mergeable.
 
 2. If `$EXTRACT_CMD` is non-empty, run it to ensure translation files reflect the latest source strings.
 
@@ -114,4 +120,5 @@ If no language in this PR has a matching entry in `$LANGUAGE_REVIEWERS`, skip th
 - Do not touch files for languages that have all translations filled in.
 - Skip the source language (`$SOURCE_LANGUAGE`).
 - Always push to the `fork` remote, never to `origin`.
+- The branch is based on `origin/main` and stays that way. If a push to the fork is rejected, report the rejection — never rebase onto `fork/main` to get the push through, because that silently moves the PR onto a stale base.
 - Always create the PR with `--repo $TARGET_REPO --head $BOT_ORG:$BRANCH_PREFIX`.
