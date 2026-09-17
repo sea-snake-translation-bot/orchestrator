@@ -3,7 +3,10 @@ name: Feedback
 # Polls for unaddressed reviewer feedback on bot-created translation PRs.
 on:
   schedule:
-    - cron: "*/15 * * * *" # every 15 minutes
+      # GitHub delays and drops scheduled runs, and does not honour short
+      # intervals: measured over a day, this fires every 2-5 hours, not at
+      # the interval below. Anything that needs to happen now is dispatched.
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -109,6 +112,12 @@ jobs:
           git remote add fork "https://x-access-token:${BOT_PAT}@github.com/${{ matrix.pr.fork }}.git"
           git fetch fork
 
+      - name: Snapshot branch refs
+        working-directory: target
+        run: |
+          git for-each-ref --format='%(refname:short)=%(objectname)' refs/heads/ \
+            > "$RUNNER_TEMP/pre-refs.txt"
+
       - name: Run Claude
         working-directory: target
         env:
@@ -134,7 +143,48 @@ jobs:
           prompt=$(envsubst < "$ORCHESTRATOR_DIR/prompts/feedback.md")
           claude -p "$prompt" \
             --dangerously-skip-permissions \
-            --allowedTools "Bash(git:*),Bash(gh pr:*),Bash(gh api repos/${{ matrix.pr.repo }}/:*),Bash(gh api graphql:*),Bash(npm:*),Bash(yarn:*),Bash(pnpm:*),Bash(awk:*),Bash(grep:*),Bash(sed:*),Bash(cat:*),Bash(basename:*),Bash(echo:*),Bash(jq:*),Bash(wc:*),Bash(head:*),Bash(tail:*),Bash(date:*),Bash(find:*),Bash(ls:*),Bash(mkdir:*),Bash(cd:*),Bash(envsubst:*),Bash(printf:*),Bash(sort:*),Bash(uniq:*),Bash(tr:*),Read,Write,Edit,Glob,Grep,Agent"
+            --allowedTools "Bash(git:*),Bash(gh pr create:*),Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api repos/${{ matrix.pr.repo }}/:*),Bash(gh api graphql:*),Bash(npm:*),Bash(yarn:*),Bash(pnpm:*),Bash(awk:*),Bash(grep:*),Bash(sed:*),Bash(cat:*),Bash(basename:*),Bash(echo:*),Bash(jq:*),Bash(wc:*),Bash(head:*),Bash(tail:*),Bash(date:*),Bash(find:*),Bash(ls:*),Bash(mkdir:*),Bash(cd:*),Bash(envsubst:*),Bash(printf:*),Bash(sort:*),Bash(uniq:*),Bash(tr:*),Read,Write,Edit,Glob,Grep,Agent"
+
+      # Feedback fixes translations; a fix that belongs in source goes through
+      # Escalate, which gates its own diff before pushing. So anything this run
+      # changed outside the locales path is a mistake, and the run says so
+      # rather than leaving it to be noticed in review. The prompt pushes as
+      # part of its own flow, so this reports rather than prevents.
+      - name: Audit Claude changes
+        if: always()
+        working-directory: target
+        env:
+          LOCALES_PATH: ${{ steps.repo-config.outputs.locales_path }}
+        run: |
+          set -euo pipefail
+          [ -f "$RUNNER_TEMP/pre-refs.txt" ] || exit 0
+          violations=()
+          while IFS='=' read -r ref sha; do
+            pre_sha=$(grep "^${ref}=" "$RUNNER_TEMP/pre-refs.txt" 2>/dev/null | cut -d= -f2 || true)
+            if [ -z "$pre_sha" ]; then
+              base="origin/main"
+            elif [ "$pre_sha" != "$sha" ]; then
+              base="$pre_sha"
+            else
+              continue
+            fi
+            files=$(git diff --name-only "$base..$sha" 2>/dev/null || true)
+            [ -z "$files" ] && continue
+            while IFS= read -r f; do
+              case "$f" in
+                "$LOCALES_PATH"/*) ;;
+                *) violations+=("$ref: $f") ;;
+              esac
+            done <<< "$files"
+          done < <(git for-each-ref --format='%(refname:short)=%(objectname)' refs/heads/)
+
+          if [ ${#violations[@]} -gt 0 ]; then
+            echo "::error::Claude changed files outside $LOCALES_PATH:"
+            printf '  %s\n' "${violations[@]}"
+            echo "::error::A fix that belongs in source goes through the Escalate workflow."
+            exit 1
+          fi
+          echo "Audit passed — every change this run made is inside $LOCALES_PATH."
 
       # Each defect becomes one Escalate run, which fixes it in the target
       # repo's source and pushes onto the translation PR. Skipped when the bot

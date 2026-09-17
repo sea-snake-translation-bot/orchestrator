@@ -4,7 +4,10 @@ name: Translate
 # combined PR per repo covering every language that needs an update.
 on:
   schedule:
-    - cron: "0 * * * *" # hourly — precheck skips if nothing is missing
+      # GitHub delays and drops scheduled runs, and does not honour short
+      # intervals: measured over a day, this fires every 2-5 hours, not at
+      # the interval below. Anything that needs to happen now is dispatched.
+    - cron: "0 * * * *" # precheck skips the run if nothing is missing
   workflow_dispatch:
     inputs:
       target_repo:
@@ -254,7 +257,7 @@ jobs:
           prompt=$(envsubst < "$ORCHESTRATOR_DIR/prompts/check.md")
           claude -p "$prompt" \
             --dangerously-skip-permissions \
-            --allowedTools "Bash(git:*),Bash(gh pr:*),Bash(gh api repos/${{ matrix.repo.repo }}/:*),Bash(gh api graphql:*),Bash(npm:*),Bash(yarn:*),Bash(pnpm:*),Bash(awk:*),Bash(grep:*),Bash(sed:*),Bash(cat:*),Bash(basename:*),Bash(echo:*),Bash(jq:*),Bash(wc:*),Bash(head:*),Bash(tail:*),Bash(date:*),Bash(find:*),Bash(ls:*),Bash(mkdir:*),Bash(cd:*),Bash(envsubst:*),Bash(printf:*),Bash(sort:*),Bash(uniq:*),Bash(tr:*),Read,Write,Edit,Glob,Grep,Agent"
+            --allowedTools "Bash(git:*),Bash(gh pr create:*),Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api repos/${{ matrix.repo.repo }}/:*),Bash(gh api graphql:*),Bash(npm:*),Bash(yarn:*),Bash(pnpm:*),Bash(awk:*),Bash(grep:*),Bash(sed:*),Bash(cat:*),Bash(basename:*),Bash(echo:*),Bash(jq:*),Bash(wc:*),Bash(head:*),Bash(tail:*),Bash(date:*),Bash(find:*),Bash(ls:*),Bash(mkdir:*),Bash(cd:*),Bash(envsubst:*),Bash(printf:*),Bash(sort:*),Bash(uniq:*),Bash(tr:*),Read,Write,Edit,Glob,Grep,Agent"
 
       - name: Audit Claude changes
         if: always() && steps.gate.outputs.skip != 'true'
